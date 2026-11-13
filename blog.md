@@ -1,6 +1,6 @@
 # From 1.6K to 5.5K Tokens/sec: Making Gemma-4-31B-it 3.5× Faster on a Single RTX PRO 6000 with vLLM
 
-**TL;DR:** We started with a default vLLM setup serving Gemma-4-31B-it on one NVIDIA RTX PRO 6000 (Blackwell, 96 GB). By changing seven settings one at a time, we raised total throughput from **1,596 to 5,555 tokens/sec (3.48×)** and cut mean time-to-first-token (TTFT) from **39.6 s to 3.8 s (−90%)**. All 100 requests succeeded in every run.
+We started with a default vLLM setup serving Gemma-4-31B-it on one NVIDIA RTX PRO 6000 (Blackwell, 96 GB). By changing seven settings one at a time, we raised total throughput from **1,596 to 5,555 tokens/sec (3.48×)** and cut mean time-to-first-token (TTFT) from **39.6 s to 3.8 s (−90%)**. All 100 requests succeeded in every run.
 
 | Step | Change | Throughput (tok/s) | Mean TTFT | Mean TPOT | Mean ITL | Verdict |
 |---|---|---|---|---|---|---|
