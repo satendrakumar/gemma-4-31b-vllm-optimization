@@ -1,6 +1,10 @@
-# One GPU, 3.5× Faster: Tuning Gemma 4 31B with vLLM
+# One GPU, 3.5× Faster: Tuning Gemma-4-31B-it with vLLM
 
 Google's [Gemma 4](https://arxiv.org/abs/2607.02770) family is one of the strongest open model releases so far. The largest dense model, **Gemma-4-31B-it**, ranks as the top open dense model on the Arena text leaderboard (Elo 1451). It comes under the Apache 2.0 license, so you can run it, fine-tune it, and ship it however you like.
+
+![Gemma 4 Arena Elo score vs. model size](images/gemma__gemma-4__elo-size__dark_QICdcNx.svg)
+
+*Arena text Elo vs. model size. Source: [Google DeepMind, Gemma 4](https://deepmind.google/models/gemma/gemma-4/).*
 
 We've been running it in production for a multilingual workload with long documents, many of them in Indic languages. Before getting into the tuning, here's what makes the model worth the effort.
 
