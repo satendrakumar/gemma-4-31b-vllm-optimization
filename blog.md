@@ -1,34 +1,32 @@
 # From 1.6K to 5.5K Tokens/sec: Making Gemma-4-31B-it 3.5× Faster on a Single RTX PRO 6000 with vLLM
 
-We started with a default vLLM setup serving Gemma-4-31B-it on one NVIDIA RTX PRO 6000 (Blackwell, 96 GB). By changing seven settings one at a time, we raised total throughput from **1,596 to 5,555 tokens/sec (3.48×)** and cut mean time-to-first-token (TTFT) from **39.6 s to 3.8 s (−90%)**. All 100 requests succeeded in every run.
+For the past year, Gemini-2.5-Flash has been the workhorse behind one of our production workloads: long, multilingual documents, a lot of them in Indic languages. It was fast, accurate enough, and cheap. Then the deprecation notice arrived.
 
-| Step | Change | Throughput (tok/s) | Mean TTFT | Mean TPOT | Mean ITL | Verdict |
-|---|---|---|---|---|---|---|
-| 0 | Baseline (defaults, 32K context) | 1,596 | 39.6 s | 82.6 ms | 84.7 ms | — |
-| 1 | `--max-model-len 20480` | 1,812 (+14%) | 31.7 s (−20%) | 82.0 ms (−1%) | 83.9 ms (−1%) | ✅ Keep |
-| 2 | `--gpu-memory-utilization 0.95` | 2,056 (+13%) | 13.3 s (−58%) | 99.8 ms (+22%) | 102.4 ms (+22%) | ✅ Keep |
-| 3 | `--kv-cache-dtype fp8` | 2,547 (+24%) | 8.4 s (−37%) | 85.6 ms (−14%) | 87.7 ms (−14%) | ✅ Keep |
-| 4 | `--max-num-seqs` / `--max-num-batched-tokens` | 2,545 (0%) | 8.4 s (0%) | 85.6 ms (0%) | 87.7 ms (0%) | ➖ No effect |
-| 5 | Speculative decoding (MTP, 4 tokens) | 3,695 (+45%) | 6.0 s (−29%) | 59.5 ms (−30%) | 209.8 ms (+139%) | ✅ Keep |
-| 6 | `--attention-backend FLASHINFER` | 3,713 (+0.5%) | 5.2 s (−14%) | 60.0 ms (+1%) | 204.2 ms (−3%) | ➖ Optional |
-| 7 | `--quantization fp8` | **5,555 (+50%)** | **3.8 s (−26%)** | **39.7 ms (−34%)** | 137.1 ms (−33%) | ✅ Keep if ~1% accuracy loss is OK |
+Gemini-2.5-Flash is deprecated and has already been removed from Google AI Studio. From **December 1, 2026**, every API call to gemini-2.5-flash will be automatically routed to gemini-3.5-flash-lite and billed at Flash-Lite rates.
 
----
+The natural upgrade, Gemini-3.5-Flash, costs **\$1.50 per million input tokens** and **\$9.00 per million output tokens**. That's **5× more for input** and **3.6× more for output** than we pay today.
 
-## Why Gemma-4-31B-it instead of Gemini Flash?
+So we had a choice. We could accept a model swap we didn't pick and a much bigger bill, or we could take this as the moment to move to an open model that we control. We chose the open model, and this post is about what that took.
 
-**1. Lower cost.** Same monthly traffic (14.4B tokens), running 24/7:
+## Why we moved to an open model
 
-| | Monthly cost | Per 1M tokens |
-|---|---|---|
-| Gemini Flash (API) | ~$5,280 | ~$0.37 |
-| **Gemma on RTX PRO 6000** | **$2,880** (flat) | **~$0.20** |
+Even if self-hosting had only matched what we paid for Gemini-2.5-Flash, we'd still have made the move:
 
-That's **about 1.8× cheaper**. See the full breakdown below.
+**1. Nobody can retire it on us.** An open model we host keeps running until *we* decide to change it. No deprecation emails, no silent rerouting to a different model, no surprise price changes.
 
 **2. We can fine-tune it.** Gemma's weights are open, so we can fine-tune it on our own data and own the result. Gemini is a closed API model.
 
 **3. Our data stays private.** The model runs in our own GKE cluster, so no prompt leaves our VPC.
+
+**4. It turned out much cheaper.** After tuning, one GPU handles our traffic for a flat monthly price (14.4B tokens/month, running 24/7):
+
+| | Monthly cost | Per 1M tokens |
+|---|---|---|
+| Gemini-3.5-Flash (the upgrade path) | ~\$24,870 | ~\$1.73 |
+| Gemini-2.5-Flash (retiring) | ~\$5,280 | ~\$0.37 |
+| **Gemma-4-31B-it on 1× RTX PRO 6000** | **~\$3,000** (flat) | **~\$0.21** |
+
+That's **about 8.3× cheaper than Gemini-3.5-Flash**, and still about 1.8× cheaper than the Gemini-2.5-Flash pricing we're losing. The full breakdown is further down.
 
 ### Why Gemma-4-31B-it and not another open model?
 
@@ -50,11 +48,17 @@ Before choosing Gemma-4-31B-it, we evaluated three similar-sized open models: tw
 
 **The trade-off:** a dense 31B model is much slower to serve than a 3–4B-active MoE model, because every token reads all 31B weights. That's exactly why the rest of this post focuses on optimization: we wanted dense-model accuracy at a cost that still beats a managed API.
 
-### Cost breakdown: self-hosted Gemma vs. Gemini Flash
+### Cost breakdown: self-hosted Gemma vs. Gemini
 
-**Pricing used:**
-- **Gemini Flash:** $0.30 per 1M input tokens, $2.50 per 1M output tokens (output includes thinking tokens)
-- **RTX PRO 6000 server:** $2,880/month flat, with no limit on tokens
+**Pricing used (per 1M tokens):**
+
+| | Input | Output |
+|---|---|---|
+| Gemini-2.5-Flash (retiring) | \$0.30 | \$2.50 |
+| Gemini-3.5-Flash | \$1.50 | \$9.00 |
+| RTX PRO 6000 server | ~\$3,000/month flat, no limit on tokens | |
+
+Gemini output prices include thinking tokens.
 
 **Assumptions:** the server runs our benchmark workload (16K input / 512 output per request) at full load around the clock for a 30-day month. That's 2,592,000 seconds.
 
@@ -62,15 +66,33 @@ Before choosing Gemma-4-31B-it, we evaluated three similar-sized open models: tw
 |---|---|---|
 | Input tokens / month | 4.01 B | 13.96 B |
 | Output tokens / month | 0.13 B | 0.44 B |
-| **Self-hosted cost** | $2,880 | $2,880 |
-| **Self-hosted cost per 1M tokens** | $0.70 | **$0.20** |
-| Gemini Flash cost for the same tokens | $1,516 | $5,279 |
-| Gemini Flash cost per 1M tokens (this mix) | $0.37 | $0.37 |
-| **Result** | Self-hosting costs **1.9× more** | Self-hosting is **1.8× cheaper** (saves ~$2,400/month) |
+| **Self-hosted cost** | \$3,000 | \$3,000 |
+| **Self-hosted cost per 1M tokens** | \$0.73 | **\$0.21** |
+| Gemini-2.5-Flash cost for the same tokens | \$1,516 | \$5,279 |
+| Gemini-3.5-Flash cost for the same tokens | \$7,143 | \$24,868 |
+| **vs. Gemini-2.5-Flash** | 2× more expensive | **1.8× cheaper** |
+| **vs. Gemini-3.5-Flash** | 2.4× cheaper | **8.3× cheaper** (saves ~\$21,900/month) |
 
-**The tuning is what makes self-hosting pay off.** With default settings, the GPU costs almost twice as much as Gemini Flash for the same traffic. After tuning, the same server is about 1.8× cheaper.
+**The tuning is what makes the numbers work.** With vLLM's default settings, self-hosting would have cost about twice as much as Gemini-2.5-Flash. After tuning, it beats even that.
 
-> **Caveat:** The server costs the same whether it's busy or idle, while Gemini charges only for tokens you use. For our optimized setup, the break-even point is about **55% average utilization** ($2,880 ÷ $5,279). Below that, Gemini Flash is cheaper. The comparison also depends on your traffic: our workload is mostly input tokens, which are cheap on Gemini. Output-heavy workloads tilt further in favor of self-hosting, because Gemini output costs $2.50 per 1M tokens.
+> **Caveat:** The server costs the same whether it's busy or idle, while Gemini charges only for tokens you use. For our optimized setup, the break-even point against Gemini-3.5-Flash is only about **12% average utilization** (\$3,000 ÷ \$24,868), and about 57% against Gemini-2.5-Flash pricing. Our workload is also mostly input tokens. Output-heavy workloads tilt further in favor of self-hosting, because output tokens are the expensive part of Gemini's pricing.
+
+## The results at a glance
+
+Here's where we ended up. We started from a default vLLM setup serving Gemma-4-31B-it on one NVIDIA RTX PRO 6000 (Blackwell, 96 GB). By changing seven settings one at a time, we raised total throughput from **1,596 to 5,555 tokens/sec (3.48×)** and cut mean time-to-first-token (TTFT) from **39.6 s to 3.8 s (−90%)**. All 100 requests succeeded in every run.
+
+| Step | Change | Throughput (tok/s) | Mean TTFT | Mean TPOT | Mean ITL | Verdict |
+|---|---|---|---|---|---|---|
+| 0 | Baseline (defaults, 32K context) | 1,596 | 39.6 s | 82.6 ms | 84.7 ms | — |
+| 1 | `--max-model-len 20480` | 1,812 (+14%) | 31.7 s (−20%) | 82.0 ms (−1%) | 83.9 ms (−1%) | ✅ Keep |
+| 2 | `--gpu-memory-utilization 0.95` | 2,056 (+13%) | 13.3 s (−58%) | 99.8 ms (+22%) | 102.4 ms (+22%) | ✅ Keep |
+| 3 | `--kv-cache-dtype fp8` | 2,547 (+24%) | 8.4 s (−37%) | 85.6 ms (−14%) | 87.7 ms (−14%) | ✅ Keep |
+| 4 | `--max-num-seqs` / `--max-num-batched-tokens` | 2,545 (0%) | 8.4 s (0%) | 85.6 ms (0%) | 87.7 ms (0%) | ➖ No effect |
+| 5 | Speculative decoding (MTP, 4 tokens) | 3,695 (+45%) | 6.0 s (−29%) | 59.5 ms (−30%) | 209.8 ms (+139%) | ✅ Keep |
+| 6 | `--attention-backend FLASHINFER` | 3,713 (+0.5%) | 5.2 s (−14%) | 60.0 ms (+1%) | 204.2 ms (−3%) | ➖ Optional |
+| 7 | `--quantization fp8` | **5,555 (+50%)** | **3.8 s (−26%)** | **39.7 ms (−34%)** | 137.1 ms (−33%) | ✅ Keep if ~1% accuracy loss is OK |
+
+The rest of this post walks through each step: what the setting does, why it helps, and what it did to our numbers.
 
 ---
 
