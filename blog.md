@@ -1,32 +1,49 @@
-# From 1.6K to 5.5K Tokens/sec: Making Gemma-4-31B-it 3.5× Faster on a Single RTX PRO 6000 with vLLM
+# One GPU, 3.5× Faster: Tuning Gemma 4 31B with vLLM
 
-For the past year, Gemini-2.5-Flash has been the workhorse behind one of our production workloads: long, multilingual documents, a lot of them in Indic languages. It was fast, accurate enough, and cheap. Then the deprecation notice arrived.
+Google's [Gemma 4](https://arxiv.org/abs/2607.02770) family is one of the strongest open model releases so far. The largest dense model, **Gemma-4-31B-it**, ranks as the top open dense model on the Arena text leaderboard (Elo 1451). It comes under the Apache 2.0 license, so you can run it, fine-tune it, and ship it however you like.
 
-Gemini-2.5-Flash is deprecated and has already been removed from Google AI Studio. From **December 1, 2026**, every API call to gemini-2.5-flash will be automatically routed to gemini-3.5-flash-lite and billed at Flash-Lite rates.
+We've been running it in production for a multilingual workload with long documents, many of them in Indic languages. Before getting into the tuning, here's what makes the model worth the effort.
 
-The natural upgrade, Gemini-3.5-Flash, costs **\$1.50 per million input tokens** and **\$9.00 per million output tokens**. That's **5× more for input** and **3.6× more for output** than we pay today.
+## Meet Gemma-4-31B-it
 
-So we had a choice. We could accept a model swap we didn't pick and a much bigger bill, or we could take this as the moment to move to an open model that we control. We chose the open model, and this post is about what that took.
+**Advanced reasoning.** Gemma 4 has a built-in *thinking mode*. Turn it on, and the model writes out a reasoning trace before it answers. With thinking enabled, the 31B model scores:
 
-## Why we moved to an open model
+| Benchmark | What it tests | Score |
+|---|---|---|
+| MMLU Pro | Broad knowledge and reasoning | 85.2 |
+| GPQA Diamond | Graduate-level science | 84.3 |
+| AIME 2026 (no tools) | Competition math | 89.2 |
+| LiveCodeBench v6 | Coding | 80.0 |
+| MMMLU | Multilingual knowledge | 88.4 |
+| IFEval | Instruction following | 98.9 |
 
-Even if self-hosting had only matched what we paid for Gemini-2.5-Flash, we'd still have made the move:
+**Built-in speculative decoding (MTP).** Google also ships a small **multi-token prediction (MTP) drafter** with Gemma 4. It's a 4-layer, ~500M-parameter model that reuses the main model's KV cache to guess several tokens ahead. vLLM supports it directly, and in Step 5 below it gives us **+45% throughput** on its own.
 
-**1. Nobody can retire it on us.** An open model we host keeps running until *we* decide to change it. No deprecation emails, no silent rerouting to a different model, no surprise price changes.
+**Efficient long-context design.** Most layers use local sliding-window attention, with one global-attention layer for every five local ones. Global layers also reuse keys as values. Together, these cut the global KV cache by up to 37.5%, which matters a lot when you serve 16K-token prompts on a single GPU.
 
-**2. We can fine-tune it.** Gemma's weights are open, so we can fine-tune it on our own data and own the result. Gemini is a closed API model.
+**Ready for agents.** Native function calling and tool use are built in. The 31B model scores 75.0 / 86.4 / 69.3 on the Tau2 airline / retail / telecom agent benchmarks.
 
-**3. Our data stays private.** The model runs in our own GKE cluster, so no prompt leaves our VPC.
+*All numbers above come from the [Gemma 4 Technical Report](https://arxiv.org/abs/2607.02770).*
 
-**4. It turned out much cheaper.** After tuning, one GPU handles our traffic for a flat monthly price (14.4B tokens/month, running 24/7):
+**The catch:** a 31B dense model is heavy. In bf16, the weights alone take about 64 GB. Out of the box, our vLLM server managed only **~1,600 tokens/sec**, and users waited **~40 seconds** for the first token. This post shows how we got that to **5,555 tokens/sec** and **3.8 seconds** on a single NVIDIA RTX PRO 6000.
+
+## Why an open model instead of a managed API
+
+**1. Nobody can retire it on you.** A model you host keeps running until *you* decide to change it. Managed APIs don't make that promise. For example, Gemini-2.5-Flash has been deprecated and removed from Google AI Studio, and from **December 1, 2026**, its API calls will be routed to Gemini-3.5-Flash-Lite and billed at Flash-Lite rates.
+
+**2. You can fine-tune it.** Gemma's weights are open, so we can fine-tune it on our own data and own the result. Gemini is a closed API model.
+
+**3. Your data stays private.** The model runs in our own GKE cluster, so no prompt leaves our VPC.
+
+**4. It's much cheaper at steady load.** Gemini-3.5-Flash costs **\$1.50 per million input tokens** and **\$9.00 per million output tokens**, which is 5× and 3.6× Gemini-2.5-Flash's prices. After tuning, one GPU handles 14.4B tokens/month (running 24/7) for a flat monthly price:
 
 | | Monthly cost | Per 1M tokens |
 |---|---|---|
-| Gemini-3.5-Flash (the upgrade path) | ~\$24,870 | ~\$1.73 |
+| Gemini-3.5-Flash | ~\$24,870 | ~\$1.73 |
 | Gemini-2.5-Flash (retiring) | ~\$5,280 | ~\$0.37 |
 | **Gemma-4-31B-it on 1× RTX PRO 6000** | **~\$3,000** (flat) | **~\$0.21** |
 
-That's **about 8.3× cheaper than Gemini-3.5-Flash**, and still about 1.8× cheaper than the Gemini-2.5-Flash pricing we're losing. The full breakdown is further down.
+That's **about 8.3× cheaper than Gemini-3.5-Flash**, and still about 1.8× cheaper than Gemini-2.5-Flash pricing. The full breakdown is further down.
 
 ### Why Gemma-4-31B-it and not another open model?
 
@@ -377,7 +394,7 @@ TTFT improved somewhat, but throughput stayed flat. Keep this setting if TTFT ma
 
 **What it does:** `--quantization fp8` converts the model weights from 16-bit to 8-bit floats when the model loads. No separate pre-quantized checkpoint is needed.
 
-**Why it helps:** The weights shrink from about 62 GB to about 31 GB. That **halves the memory read for every decoded token**, lets Blackwell's FP8 Tensor Cores do the matrix math, and frees roughly 30 GB more for the KV cache.
+**Why it helps:** The weights shrink from about 64 GB to about 32 GB. That **halves the memory read for every decoded token**, lets Blackwell's FP8 Tensor Cores do the matrix math, and frees roughly 30 GB more for the KV cache.
 
 **The trade-off:** accuracy. On our internal evaluation set, quality dropped by **about 1%**, which is acceptable for our use case. Run your own evals before turning this on.
 

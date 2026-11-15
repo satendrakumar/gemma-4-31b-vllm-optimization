@@ -10,8 +10,8 @@ A writing project, not an application. The main artifact is `blog.md`: a blog po
 
 ## Structure of `blog.md`
 
-1. Narrative opening in the author's voice: Gemini-2.5-Flash is being retired (routed to 3.5 Flash-Lite from Dec 1, 2026), and Gemini-3.5-Flash costs much more, so the team is moving to an open model. Keep the opening conversational; benchmarks come later.
-2. Why an open model (no forced retirement, fine-tuning, privacy, cost), why Gemma-4-31B-it over other open models (Gemma-4-26B-A4B-it, Qwen-3.6-35B-A3B, Qwen3.8-27B), and a detailed cost breakdown
+1. Opening that introduces Gemma 4 from the [technical report](https://arxiv.org/abs/2607.02770): thinking mode and benchmark table, MTP drafter, attention design, tool use, then "the catch" (slow out of the box). **Don't say or imply the author's team uses Gemini.** Gemini appears only as an outside reference point (deprecation news, pricing, accuracy).
+2. Why an open model instead of a managed API (no forced retirement, fine-tuning, privacy, cost), why Gemma-4-31B-it over other open models (Gemma-4-26B-A4B-it, Qwen-3.6-35B-A3B, Qwen3.8-27B), and a detailed cost breakdown
 3. "The results at a glance": summary table covering every step
 4. Setup: workload profile, baseline `deploy.yaml`, baseline flag table, `vllm bench serve` command, baseline results
 5. Steps 1–7, each with "What it does" / "Why it helps", a `diff` of the flag change, and a before/after table
